@@ -431,6 +431,11 @@ button.small:hover{background:#f3e6c2;}
       <div class="box">
         <h2>The Agora of Games</h2>
         <div class="duesum">Test your knowledge for glory — best scores are remembered.</div>
+        <h5>Difficulty</h5>
+        <div class="modebtns">
+          <button id="diffEasy">Easy — major figures</button>
+          <button id="diffHard">Hard — everyone</button>
+        </div>
         <div class="gamecard" id="gowStart">
           <b>🏺 God of What?</b>
           <p>Twenty rounds. A domain amid six gods — draw the line to its true master. Or a god amid six domains — claim the right one. No second guesses.</p>
@@ -11240,11 +11245,28 @@ function boardInto(el, key, n){
   });
 }
 const GAME_KEYS = {gow:"mythos.gow.scores", blood:"mythos.blood.scores", chron:"mythos.chron.scores", deeds:"mythos.deeds.scores"};
+/* difficulty: easy = major figures only, hard = everyone. Separate boards. */
+let gameDiff = LS.get("mythos.diff", "easy");
+function diffKey(g){ return GAME_KEYS[g] + (gameDiff==="easy" ? ".easy" : ".hard"); }
+function diffTag(){ return gameDiff==="easy" ? " · Easy" : " · Hard"; }
+function poolByDiff(arr){ return gameDiff==="easy" ? arr.filter(n=>n.major) : arr; }
+// migrate pre-difficulty scores to the Hard boards (they drew on all figures)
+for (const k of Object.values(GAME_KEYS)){
+  const old = LS.get(k, null);
+  if (old && !LS.get(k+".hard", null)) LS.set(k+".hard", old);
+}
+function syncDiffBtns(){
+  document.getElementById("diffEasy").classList.toggle("on", gameDiff==="easy");
+  document.getElementById("diffHard").classList.toggle("on", gameDiff==="hard");
+}
+document.getElementById("diffEasy").addEventListener("click", ()=>{ gameDiff="easy"; LS.set("mythos.diff",gameDiff); syncDiffBtns(); renderScores(); });
+document.getElementById("diffHard").addEventListener("click", ()=>{ gameDiff="hard"; LS.set("mythos.diff",gameDiff); syncDiffBtns(); renderScores(); });
+syncDiffBtns();
 function renderScores(){
-  boardInto(document.getElementById("gowMini"), GAME_KEYS.gow, 3);
-  boardInto(document.getElementById("bloodMini"), GAME_KEYS.blood, 3);
-  boardInto(document.getElementById("chronMini"), GAME_KEYS.chron, 3);
-  boardInto(document.getElementById("deedsMini"), GAME_KEYS.deeds, 3);
+  boardInto(document.getElementById("gowMini"), diffKey("gow"), 3);
+  boardInto(document.getElementById("bloodMini"), diffKey("blood"), 3);
+  boardInto(document.getElementById("chronMini"), diffKey("chron"), 3);
+  boardInto(document.getElementById("deedsMini"), diffKey("deeds"), 3);
 }
 function clearGStage(){
   const st = document.getElementById("gStage");
@@ -11301,6 +11323,7 @@ const gow = {round:0, total:20, score:0, cur:null, answered:false, over:false};
 document.getElementById("gowStart").addEventListener("click", ()=>{
   gameSelect.classList.remove("open");
   gow.round = 0; gow.score = 0; gow.over = false;
+  gow.activePool = poolByDiff(gowPool);
   curGame = {next(){ gow.round++; gowNext(); }};
   gameEl.classList.add("open");
   gowNext();
@@ -11324,13 +11347,14 @@ function gowNext(){
   clearGStage();
   const st = document.getElementById("gStage");
   const mode = Math.random()<0.5 ? "findGod" : "findDomain";
-  const god = gowPool[Math.floor(Math.random()*gowPool.length)];
+  const pool = gow.activePool || gowPool;
+  const god = pool[Math.floor(Math.random()*pool.length)];
   const dom = god.domains[Math.floor(Math.random()*god.domains.length)];
   const dk = dom.toLowerCase();
   let centerEl, options;   // options: [{id,label,kind,correct,color}]
   if (mode==="findGod"){
     const owners = domainOwners.get(dk).owners;
-    const wrong = sample(gowPool, 5, g=>!owners.has(g.id) && g.id!==god.id);
+    const wrong = sample(pool, 5, g=>!owners.has(g.id) && g.id!==god.id);
     options = [{id:god.id, label:god.name, kind:"god", correct:true, color:NODE_TYPES[god.type].color}]
       .concat(wrong.map(g=>({id:g.id, label:g.name, kind:"god", correct:false, color:NODE_TYPES[g.type].color})));
     centerEl = mkGCard("domain","__center", dom, "50%","46%");
@@ -11356,7 +11380,7 @@ function gowNext(){
     st.appendChild(el);
   });
   st.querySelectorAll(".qcard").forEach(el=>el.addEventListener("mousedown", gDragStart));
-  document.getElementById("gProg").textContent = `God of What? — round ${gow.round+1} of ${gow.total} · score ${gow.score}`;
+  document.getElementById("gProg").textContent = `God of What? — round ${gow.round+1} of ${gow.total} · score ${gow.score}` + diffTag();
   document.getElementById("gHint").style.display = "";
 }
 /* drag: valid only between the centre and an option */
@@ -11436,13 +11460,13 @@ function gowAnswer(pickEl){
   document.getElementById("gStory").textContent = god.ep || "";
   document.getElementById("gFeedback").style.display = "block";
   document.getElementById("gHint").style.display = "none";
-  document.getElementById("gProg").textContent = `God of What? — round ${gow.round+1} of ${gow.total} · score ${gow.score}`;
+  document.getElementById("gProg").textContent = `God of What? — round ${gow.round+1} of ${gow.total} · score ${gow.score}` + diffTag();
 }
 document.getElementById("gNext").addEventListener("click", ()=>{ if (curGame) curGame.next(); });
 function gowSummary(){
   gow.over = true;
   gameSummary({
-    title:"The Judges Have Spoken", score:gow.score, total:gow.total, scoreKey:GAME_KEYS.gow,
+    title:"The Judges Have Spoken", score:gow.score, total:gow.total, scoreKey:diffKey("gow"),
     quip: gow.score>=18?"Worthy of a temple on the Acropolis.":gow.score>=14?"The Muses nod with approval.":gow.score>=9?"Respectable — but Athena expects more.":"Back to the scrolls with you.",
     onAgain: ()=>{ gow.round=0; gow.score=0; gow.over=false; gowNext(); },
   });
@@ -11458,6 +11482,10 @@ const blood = {round:0, total:20, score:0, cur:null, answered:false, over:false}
 document.getElementById("bloodStart").addEventListener("click", ()=>{
   gameSelect.classList.remove("open");
   blood.round = 0; blood.score = 0; blood.over = false;
+  blood.activePool = gameDiff==="easy"
+    ? bloodPool.filter(t=>t.child.major && t.mother.major && t.father.major)
+    : bloodPool;
+  blood.sampleSrc = poolByDiff(nodes);
   curGame = {next(){ blood.round++; bloodNext(); }};
   gameEl.classList.add("open");
   bloodNext();
@@ -11467,7 +11495,8 @@ function bloodNext(){
   blood.answered = false;
   clearGStage();
   const st = document.getElementById("gStage");
-  const t = bloodPool[Math.floor(Math.random()*bloodPool.length)];
+  const pool = blood.activePool || bloodPool;
+  const t = pool[Math.floor(Math.random()*pool.length)];
   const blankKey = ["child","mother","father"][Math.floor(Math.random()*3)];
   const answer = t[blankKey];
   const shown = ["child","mother","father"].filter(k=>k!==blankKey).map(k=>t[k]);
@@ -11477,7 +11506,7 @@ function bloodNext(){
     if (blankKey==="mother") return (answer.gender==="unknown" || g.gender==="female") && g.name!==t.child.mother;
     return (answer.gender==="unknown" || g.gender==="male") && g.name!==t.child.father;
   };
-  const wrong = sample(nodes, 5, ok);
+  const wrong = sample(blood.sampleSrc || nodes, 5, ok);
   const candidates = [answer].concat(wrong);
   for (let i=candidates.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [candidates[i],candidates[j]]=[candidates[j],candidates[i]]; }
   blood.cur = {t, blankKey, answer};
@@ -11513,7 +11542,7 @@ function bloodNext(){
              father:`Who is ${t.child.name}'s father?`}[blankKey];
   document.getElementById("gHint").textContent = q + " Drag the missing figure into place.";
   document.getElementById("gHint").style.display = "";
-  document.getElementById("gProg").textContent = `Bloodlines — round ${blood.round+1} of ${blood.total} · score ${blood.score}`;
+  document.getElementById("gProg").textContent = `Bloodlines — round ${blood.round+1} of ${blood.total} · score ${blood.score}` + diffTag();
   st.querySelectorAll(".qcard").forEach(el=>{
     if (el.dataset.opt && !el.dataset.opt.startsWith("__shown")) el.addEventListener("mousedown", bDragStart);
   });
@@ -11577,12 +11606,12 @@ function bloodAnswer(pickEl){
   document.getElementById("gStory").textContent = (me && me.d !== `${t.child.name} is the ${kidWord(t.child)} of ${t.mother.name} and ${t.father.name}.`) ? me.d : (answer.ep||"");
   document.getElementById("gFeedback").style.display = "block";
   document.getElementById("gHint").style.display = "none";
-  document.getElementById("gProg").textContent = `Bloodlines — round ${blood.round+1} of ${blood.total} · score ${blood.score}`;
+  document.getElementById("gProg").textContent = `Bloodlines — round ${blood.round+1} of ${blood.total} · score ${blood.score}` + diffTag();
 }
 function bloodSummary(){
   blood.over = true;
   gameSummary({
-    title:"The Line Is Recorded", score:blood.score, total:blood.total, scoreKey:GAME_KEYS.blood,
+    title:"The Line Is Recorded", score:blood.score, total:blood.total, scoreKey:diffKey("blood"),
     quip: blood.score>=18?"You could untangle even Zeus's affairs.":blood.score>=14?"Hesiod would trust your genealogies.":blood.score>=9?"The scribes note some errors in your scroll.":"The bloodlines remain a mystery to you.",
     onAgain: ()=>{ blood.round=0; blood.score=0; blood.over=false; bloodNext(); },
   });
@@ -11601,7 +11630,10 @@ const chronPool = edges.filter(e=>{
 const chron = {round:0, total:15, score:0, cur:null, answered:false, over:false, queue:[], fill:{}};
 document.getElementById("chronStart").addEventListener("click", ()=>{
   gameSelect.classList.remove("open");
-  const q = chronPool.slice();
+  chron.sampleSrc = poolByDiff(nodes);
+  const q = (gameDiff==="easy"
+    ? chronPool.filter(e=>byId.get(e.s).major && byId.get(e.t).major)
+    : chronPool).slice();
   for (let i=q.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [q[i],q[j]]=[q[j],q[i]]; }
   // favour the storied bonds over plain lineage sentences
   q.sort((a,b)=>((a.type==="mother"||a.type==="father")?1:0)-((b.type==="mother"||b.type==="father")?1:0));
@@ -11626,7 +11658,7 @@ function chronNext(){
   story.id = "cStory";
   story.innerHTML = `“${html}”`;
   st.appendChild(story);
-  const wrong = sample(nodes, 4, g=> g.id!==A.id && g.id!==B.id && !nameRe(g.name).test(e.d));
+  const wrong = sample(chron.sampleSrc || nodes, 4, g=> g.id!==A.id && g.id!==B.id && !nameRe(g.name).test(e.d));
   const cands = [A,B].concat(wrong);
   for (let i=cands.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [cands[i],cands[j]]=[cands[j],cands[i]]; }
   cands.forEach((c,i)=>{
@@ -11641,7 +11673,7 @@ function chronNext(){
   });
   document.getElementById("gHint").textContent = "The scroll is damaged — drag the two lost names back into the tale.";
   document.getElementById("gHint").style.display = "";
-  document.getElementById("gProg").textContent = `The Chronicler — fragment ${chron.round+1} of ${chron.queue.length} · score ${chron.score}`;
+  document.getElementById("gProg").textContent = `The Chronicler — fragment ${chron.round+1} of ${chron.queue.length} · score ${chron.score}` + diffTag();
 }
 let cDrag = null;
 function cDragStart(ev){
@@ -11713,12 +11745,12 @@ function chronGrade(){
   document.getElementById("gStory").textContent = "";
   document.getElementById("gFeedback").style.display = "block";
   document.getElementById("gHint").style.display = "none";
-  document.getElementById("gProg").textContent = `The Chronicler — fragment ${chron.round+1} of ${chron.queue.length} · score ${chron.score}`;
+  document.getElementById("gProg").textContent = `The Chronicler — fragment ${chron.round+1} of ${chron.queue.length} · score ${chron.score}` + diffTag();
 }
 function chronSummary(){
   chron.over = true;
   gameSummary({
-    title:"The Chronicle Is Restored", score:chron.score, total:chron.queue.length, scoreKey:GAME_KEYS.chron,
+    title:"The Chronicle Is Restored", score:chron.score, total:chron.queue.length, scoreKey:diffKey("chron"),
     quip: chron.score>=14?"Homer himself would dictate to you.":chron.score>=10?"A worthy keeper of the tales.":chron.score>=6?"Some scrolls returned to the wrong shelf.":"The library burns a little at your hand.",
     onAgain: ()=>{ document.getElementById("chronStart").click(); },
   });
@@ -11736,13 +11768,15 @@ const deeds = {round:0, total:15, score:0, cur:null, answered:false, over:false,
 document.getElementById("deedsStart").addEventListener("click", ()=>{
   gameSelect.classList.remove("open");
   deeds.round = 0; deeds.score = 0; deeds.over = false;
+  deeds.activePool = poolByDiff(deedsPool);
+  deeds.sampleSrc = poolByDiff(nodes);
   curGame = {next(){ deeds.round++; deedsNext(); }};
   gameEl.classList.add("open");
   deedsNext();
 });
 function deedsProgText(){
   const pips = "●".repeat(deeds.attemptsLeft) + "○".repeat(3-deeds.attemptsLeft);
-  return `Whose Deeds? — round ${deeds.round+1} of ${deeds.total} · score ${deeds.score} · guesses ${pips}`;
+  return `Whose Deeds? — round ${deeds.round+1} of ${deeds.total} · score ${deeds.score} · guesses ${pips}` + diffTag();
 }
 function profileCardHTML(n, reveal, hideName){
   const lines = profLines(n).slice(0, reveal);
@@ -11755,15 +11789,16 @@ function deedsNext(){
   clearGStage();
   const st = document.getElementById("gStage");
   const mode = Math.random()<0.5 ? "findChar" : "findProfile";
-  const target = deedsPool[Math.floor(Math.random()*deedsPool.length)];
+  const pool = deeds.activePool || deedsPool;
+  const target = pool[Math.floor(Math.random()*pool.length)];
   let options;   // [{id, correct}]
   if (mode==="findChar"){
     // centre: anonymous dossier — options: six names
-    const wrong = sample(nodes, 5, g=>g.id!==target.id);
+    const wrong = sample(deeds.sampleSrc || nodes, 5, g=>g.id!==target.id);
     options = [{n:target, correct:true}].concat(wrong.map(g=>({n:g, correct:false})));
   } else {
     // centre: a name — options: six dossiers
-    const wrong = sample(deedsPool, 5, g=>g.id!==target.id);
+    const wrong = sample(pool, 5, g=>g.id!==target.id);
     options = [{n:target, correct:true}].concat(wrong.map(g=>({n:g, correct:false})));
   }
   for (let i=options.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [options[i],options[j]]=[options[j],options[i]]; }
@@ -11864,7 +11899,7 @@ function deedsSummary(){
   deeds.over = true;
   const max = deeds.total*3;
   gameSummary({
-    title:"The Oracle Renders Judgement", score:deeds.score, total:max, scoreKey:GAME_KEYS.deeds,
+    title:"The Oracle Renders Judgement", score:deeds.score, total:max, scoreKey:diffKey("deeds"),
     quip: deeds.score>=max*0.85?"You know them better than they knew themselves.":deeds.score>=max*0.6?"The heralds would hire you on the spot.":deeds.score>=max*0.35?"Names and deeds still drift apart in your memory.":"To you, every god is a stranger.",
     onAgain: ()=>{ deeds.round=0; deeds.score=0; deeds.over=false; deedsNext(); },
   });
