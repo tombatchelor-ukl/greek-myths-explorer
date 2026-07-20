@@ -364,7 +364,7 @@ button.small:hover{background:#f3e6c2;}
         <button id="modeForce" class="on">Constellation</button>
         <button id="modeTree">Family Tree</button>
       </div>
-      <label class="ctlrow"><input type="checkbox" id="majorOnly"> Major characters only</label>
+      <label class="ctlrow"><input type="checkbox" id="majorOnly" checked> Major characters only</label>
       <button class="small" id="fitBtn">⊙ &nbsp;Fit to view</button>
       <div class="note" id="treeNote" style="display:none">The tree shows figures with recorded lineage, eldest powers uppermost.</div>
 
@@ -10103,7 +10103,7 @@ for (const e of edges){
 /* ---------------- state ---------------- */
 const state = {
   mode:"force",              // force | tree
-  majorOnly:false,
+  majorOnly:true,
   bondsOnly:false,
   active:new Set(Object.keys(REL_TYPES)),
   races:new Set(Object.keys(NODE_TYPES)),
