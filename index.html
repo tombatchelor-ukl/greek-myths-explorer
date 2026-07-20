@@ -379,6 +379,11 @@ button.small:hover{background:#f3e6c2;}
       <label class="keyrow" style="font-weight:700"><input type="checkbox" id="allRaces" checked><span>All races</span></label>
       <div id="typeKey"></div>
 
+      <h3>Tomes &amp; Tales</h3>
+      <label class="keyrow" style="font-weight:700"><input type="checkbox" id="allWorks" checked><span>All works</span></label>
+      <div id="workKey"></div>
+      <div class="note">Untick works to show only figures who appear in the ticked ones.</div>
+
       <div class="note">Hover a line for the tale behind the bond. Click a card for the full account; click it again to see only its circle; a third click sets it free. Drag cards to rearrange; scroll to zoom.</div>
     </div>
 
@@ -10114,6 +10119,8 @@ const state = {
   bondsOnly:false,
   active:new Set(Object.keys(REL_TYPES)),
   races:new Set(Object.keys(NODE_TYPES)),
+  works:new Set(),   // filled at boot with every work
+
   selected:null, hoverNode:null, hoverEdge:null,
   focus:null, _focusSet:null,
   pulse:null, pulseT:0,
@@ -10121,10 +10128,17 @@ const state = {
 const cam = {x:0, y:0, k:0.7};
 let visN = [], visE = [], visSet = new Set();
 
+const WORKS = (()=>{
+  const cnt = new Map();
+  for (const n of nodes) for (const t of (n.tales||[])) cnt.set(t, (cnt.get(t)||0)+1);
+  return [...cnt.entries()].sort((a,b)=>b[1]-a[1]).map(([t])=>t);
+})();
 function baseVisible(n){
   if (state._focusSet && !state._focusSet.has(n.id)) return false;
   if (state.majorOnly && !n.major) return false;
   if (!state.races.has(n.type)) return false;
+  if (state.works.size < WORKS.length &&
+      !(n.tales && n.tales.some(t=>state.works.has(t)))) return false;
   if (state.mode==="tree" && n._gen==null) return false;
   return true;
 }
@@ -10698,6 +10712,10 @@ function selectNode(id, center=true){
       const cb = typeKey.querySelector(`input[data-race="${n.type}"]`);
       if (cb) cb.checked = true;
     }
+    if (state.works.size < WORKS.length && !(n.tales||[]).some(t=>state.works.has(t))){
+      state.works = new Set(WORKS);
+      workKey.querySelectorAll("input").forEach(i=>i.checked=true);
+    }
     applyFilters(false);
     if (!nodeVisible(n) && state.bondsOnly){
       document.getElementById("bondsOnly").checked=false; state.bondsOnly=false;
@@ -10777,8 +10795,29 @@ typeKey.addEventListener("change", ev=>{
   ev.target.checked ? state.races.add(r) : state.races.delete(r);
   applyFilters(false); syncMasters();
 });
+state.works = new Set(WORKS);
+const workKey = document.getElementById("workKey");
+for (const w of WORKS){
+  const row = document.createElement("label");
+  row.className = "keyrow";
+  row.style.fontSize = "12px";
+  row.innerHTML = `<input type="checkbox" checked data-work="${w.replace(/"/g,"&quot;")}"><span>${esc(w)}</span><span class="cnt" data-wcnt="${w.replace(/"/g,"&quot;")}"></span>`;
+  workKey.appendChild(row);
+}
+workKey.addEventListener("change", ev=>{
+  const w = ev.target.dataset.work;
+  if (!w) return;
+  ev.target.checked ? state.works.add(w) : state.works.delete(w);
+  applyFilters(false); syncMasters();
+});
 const allBonds = document.getElementById("allBonds");
 const allRaces = document.getElementById("allRaces");
+const allWorks = document.getElementById("allWorks");
+allWorks.addEventListener("change", ()=>{
+  state.works = allWorks.checked ? new Set(WORKS) : new Set();
+  workKey.querySelectorAll("input").forEach(i=>i.checked=allWorks.checked);
+  applyFilters(false); syncMasters();
+});
 allBonds.addEventListener("change", ()=>{
   state.active = allBonds.checked ? new Set(Object.keys(REL_TYPES)) : new Set();
   edgeKey.querySelectorAll("input").forEach(i=>i.checked=allBonds.checked);
@@ -10794,6 +10833,8 @@ function syncMasters(){
   allBonds.checked = nb===tb; allBonds.indeterminate = nb>0 && nb<tb;
   const nr = state.races.size, tr = Object.keys(NODE_TYPES).length;
   allRaces.checked = nr===tr; allRaces.indeterminate = nr>0 && nr<tr;
+  const nw = state.works.size, tw = WORKS.length;
+  allWorks.checked = nw===tw; allWorks.indeterminate = nw>0 && nw<tw;
 }
 function updateCounts(){
   for (const k of Object.keys(REL_TYPES)){
@@ -10803,6 +10844,10 @@ function updateCounts(){
   for (const k of Object.keys(NODE_TYPES)){
     const el = document.querySelector(`[data-tcnt="${k}"]`);
     if (el) el.textContent = visN.filter(n=>n.type===k).length;
+  }
+  for (const w of WORKS){
+    const el = document.querySelector(`[data-wcnt="${w.replace(/"/g,'\\"')}"]`);
+    if (el) el.textContent = visN.filter(n=>(n.tales||[]).includes(w)).length;
   }
   function visSetHas(e){
     const a=byId.get(e.s), b=byId.get(e.t);
@@ -11250,10 +11295,13 @@ let gameDiff = LS.get("mythos.diff", "easy");
 function diffKey(g){ return GAME_KEYS[g] + (gameDiff==="easy" ? ".easy" : ".hard"); }
 function diffTag(){ return gameDiff==="easy" ? " · Easy" : " · Hard"; }
 function poolByDiff(arr){ return gameDiff==="easy" ? arr.filter(n=>n.major) : arr; }
-// migrate pre-difficulty scores to the Hard boards (they drew on all figures)
-for (const k of Object.values(GAME_KEYS)){
-  const old = LS.get(k, null);
-  if (old && !LS.get(k+".hard", null)) LS.set(k+".hard", old);
+// one-time scoreboard reset (v2: shorter games, difficulty split, fair dossiers)
+if (!LS.get("mythos.scores.v2", null)){
+  try{
+    for (const k of Object.values(GAME_KEYS))
+      for (const suf of ["", ".easy", ".hard"]) localStorage.removeItem(k+suf);
+  }catch(_){}
+  LS.set("mythos.scores.v2", true);
 }
 function syncDiffBtns(){
   document.getElementById("diffEasy").classList.toggle("on", gameDiff==="easy");
@@ -11319,11 +11367,13 @@ function gameSummary(cfg){   // {title, score, total, quip, scoreKey, onAgain}
 document.getElementById("openGames").addEventListener("click", ()=>{ renderScores(); gameSelect.classList.add("open"); });
 document.getElementById("gsClose").addEventListener("click", ()=>gameSelect.classList.remove("open"));
 
-const gow = {round:0, total:20, score:0, cur:null, answered:false, over:false};
+const gow = {round:0, total:10, score:0, cur:null, answered:false, over:false, queue:[]};
+function shuffled(arr){ const a=arr.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
 document.getElementById("gowStart").addEventListener("click", ()=>{
   gameSelect.classList.remove("open");
   gow.round = 0; gow.score = 0; gow.over = false;
   gow.activePool = poolByDiff(gowPool);
+  gow.queue = shuffled(gow.activePool).slice(0, gow.total);   // no repeated gods in a run
   curGame = {next(){ gow.round++; gowNext(); }};
   gameEl.classList.add("open");
   gowNext();
@@ -11342,13 +11392,13 @@ function mkGCard(kind, id, label, x, y, color){
   return el;
 }
 function gowNext(){
-  if (gow.round >= gow.total) return gowSummary();
+  if (gow.round >= gow.queue.length) return gowSummary();
   gow.answered = false;
   clearGStage();
   const st = document.getElementById("gStage");
   const mode = Math.random()<0.5 ? "findGod" : "findDomain";
   const pool = gow.activePool || gowPool;
-  const god = pool[Math.floor(Math.random()*pool.length)];
+  const god = gow.queue[gow.round];
   const dom = god.domains[Math.floor(Math.random()*god.domains.length)];
   const dk = dom.toLowerCase();
   let centerEl, options;   // options: [{id,label,kind,correct,color}]
@@ -11467,8 +11517,8 @@ function gowSummary(){
   gow.over = true;
   gameSummary({
     title:"The Judges Have Spoken", score:gow.score, total:gow.total, scoreKey:diffKey("gow"),
-    quip: gow.score>=18?"Worthy of a temple on the Acropolis.":gow.score>=14?"The Muses nod with approval.":gow.score>=9?"Respectable — but Athena expects more.":"Back to the scrolls with you.",
-    onAgain: ()=>{ gow.round=0; gow.score=0; gow.over=false; gowNext(); },
+    quip: gow.score>=9?"Worthy of a temple on the Acropolis.":gow.score>=7?"The Muses nod with approval.":gow.score>=5?"Respectable — but Athena expects more.":"Back to the scrolls with you.",
+    onAgain: ()=>{ document.getElementById("gowStart").click(); },
   });
 }
 
@@ -11478,7 +11528,7 @@ function gowSummary(){
 const bloodPool = nodes
   .filter(n=>n.mother && byName.get(n.mother) && n.father && byName.get(n.father))
   .map(n=>({child:n, mother:byName.get(n.mother), father:byName.get(n.father)}));
-const blood = {round:0, total:20, score:0, cur:null, answered:false, over:false};
+const blood = {round:0, total:10, score:0, cur:null, answered:false, over:false, queue:[]};
 document.getElementById("bloodStart").addEventListener("click", ()=>{
   gameSelect.classList.remove("open");
   blood.round = 0; blood.score = 0; blood.over = false;
@@ -11486,17 +11536,17 @@ document.getElementById("bloodStart").addEventListener("click", ()=>{
     ? bloodPool.filter(t=>t.child.major && t.mother.major && t.father.major)
     : bloodPool;
   blood.sampleSrc = poolByDiff(nodes);
+  blood.queue = shuffled(blood.activePool).slice(0, blood.total);   // no repeated families
   curGame = {next(){ blood.round++; bloodNext(); }};
   gameEl.classList.add("open");
   bloodNext();
 });
 function bloodNext(){
-  if (blood.round >= blood.total) return bloodSummary();
+  if (blood.round >= blood.queue.length) return bloodSummary();
   blood.answered = false;
   clearGStage();
   const st = document.getElementById("gStage");
-  const pool = blood.activePool || bloodPool;
-  const t = pool[Math.floor(Math.random()*pool.length)];
+  const t = blood.queue[blood.round];
   const blankKey = ["child","mother","father"][Math.floor(Math.random()*3)];
   const answer = t[blankKey];
   const shown = ["child","mother","father"].filter(k=>k!==blankKey).map(k=>t[k]);
@@ -11612,8 +11662,8 @@ function bloodSummary(){
   blood.over = true;
   gameSummary({
     title:"The Line Is Recorded", score:blood.score, total:blood.total, scoreKey:diffKey("blood"),
-    quip: blood.score>=18?"You could untangle even Zeus's affairs.":blood.score>=14?"Hesiod would trust your genealogies.":blood.score>=9?"The scribes note some errors in your scroll.":"The bloodlines remain a mystery to you.",
-    onAgain: ()=>{ blood.round=0; blood.score=0; blood.over=false; bloodNext(); },
+    quip: blood.score>=9?"You could untangle even Zeus's affairs.":blood.score>=7?"Hesiod would trust your genealogies.":blood.score>=5?"The scribes note some errors in your scroll.":"The bloodlines remain a mystery to you.",
+    onAgain: ()=>{ document.getElementById("bloodStart").click(); },
   });
 }
 
@@ -11627,7 +11677,7 @@ const chronPool = edges.filter(e=>{
   if (a===b) return false;
   return nameRe(a).test(e.d) && nameRe(b).test(e.d);
 });
-const chron = {round:0, total:15, score:0, cur:null, answered:false, over:false, queue:[], fill:{}};
+const chron = {round:0, total:8, score:0, cur:null, answered:false, over:false, queue:[], fill:{}};
 document.getElementById("chronStart").addEventListener("click", ()=>{
   gameSelect.classList.remove("open");
   chron.sampleSrc = poolByDiff(nodes);
@@ -11751,7 +11801,7 @@ function chronSummary(){
   chron.over = true;
   gameSummary({
     title:"The Chronicle Is Restored", score:chron.score, total:chron.queue.length, scoreKey:diffKey("chron"),
-    quip: chron.score>=14?"Homer himself would dictate to you.":chron.score>=10?"A worthy keeper of the tales.":chron.score>=6?"Some scrolls returned to the wrong shelf.":"The library burns a little at your hand.",
+    quip: chron.score>=7?"Homer himself would dictate to you.":chron.score>=5?"A worthy keeper of the tales.":chron.score>=3?"Some scrolls returned to the wrong shelf.":"The library burns a little at your hand.",
     onAgain: ()=>{ document.getElementById("chronStart").click(); },
   });
 }
@@ -11763,13 +11813,14 @@ function chronSummary(){
 const deedsPool = nodes.filter(n => n.facts && n.facts.length>=3 &&
   !n.facts.slice(0,3).some(f=>nameRe(n.name).test(f)));
 function profLines(n){ return n.facts.slice(0,3); }
-const deeds = {round:0, total:15, score:0, cur:null, answered:false, over:false,
-               attemptsLeft:3, reveal:1};
+const deeds = {round:0, total:8, score:0, cur:null, answered:false, over:false,
+               attemptsLeft:3, reveal:1, queue:[]};
 document.getElementById("deedsStart").addEventListener("click", ()=>{
   gameSelect.classList.remove("open");
   deeds.round = 0; deeds.score = 0; deeds.over = false;
   deeds.activePool = poolByDiff(deedsPool);
   deeds.sampleSrc = poolByDiff(nodes);
+  deeds.queue = shuffled(deeds.activePool).slice(0, deeds.total);   // no repeated figures
   curGame = {next(){ deeds.round++; deedsNext(); }};
   gameEl.classList.add("open");
   deedsNext();
@@ -11784,13 +11835,13 @@ function profileCardHTML(n, reveal, hideName){
     <ul>${lines.map((f,i)=>`<li${i===reveal-1&&reveal>1?' class="newline"':''}>${esc(f)}</li>`).join("")}</ul>`;
 }
 function deedsNext(){
-  if (deeds.round >= deeds.total) return deedsSummary();
+  if (deeds.round >= deeds.queue.length) return deedsSummary();
   deeds.answered = false; deeds.attemptsLeft = 3; deeds.reveal = 1;
   clearGStage();
   const st = document.getElementById("gStage");
   const mode = Math.random()<0.5 ? "findChar" : "findProfile";
   const pool = deeds.activePool || deedsPool;
-  const target = pool[Math.floor(Math.random()*pool.length)];
+  const target = deeds.queue[deeds.round];
   let options;   // [{id, correct}]
   if (mode==="findChar"){
     // centre: anonymous dossier — options: six names
@@ -11809,30 +11860,26 @@ function deedsNext(){
   if (mode==="findChar"){
     center.className = "qcard profilecard gcenter";
     center.style.cursor = "default";
+    center.style.borderColor = "#8a6508";
     center.innerHTML = profileCardHTML(target, deeds.reveal, true);
     center.style.left="50%"; center.style.top="22%";
   } else {
     center.className = "qcard gcenter";
     center.style.cursor = "default";
-    center.style.borderColor = NODE_TYPES[target.type].color;
-    center.innerHTML = `<span class="ribbon" style="background:${NODE_TYPES[target.type].color}"></span><b>${esc(target.name)}</b>`;
+    center.style.borderColor = "#8a6508";           // neutral: colours would betray the match
+    center.innerHTML = `<b>${esc(target.name)}</b>`;
     center.style.left="50%"; center.style.top="16%";
   }
   st.appendChild(center);
-  // options
+  // options — deliberately uncoloured so race hues can't give the answer away
   const GX = ["19%","50%","81%"], GY = mode==="findChar"? ["56%","80%"] : ["48%","78%"];
   options.forEach((o,i)=>{
-    let el;
-    if (mode==="findChar"){
-      el = mkGCard("god", o.n.id, o.n.name, GX[i%3], GY[Math.floor(i/3)], NODE_TYPES[o.n.type].color);
-    } else {
-      el = document.createElement("div");
-      el.className = "qcard profilecard";
-      el.style.left = GX[i%3]; el.style.top = GY[Math.floor(i/3)];
-      el.style.borderColor = NODE_TYPES[o.n.type].color;
-      el.innerHTML = profileCardHTML(o.n, deeds.reveal, true);
-      el.dataset.opt = o.n.id;
-    }
+    const el = document.createElement("div");
+    el.className = "qcard" + (mode==="findChar" ? "" : " profilecard");
+    el.style.left = GX[i%3]; el.style.top = GY[Math.floor(i/3)];
+    el.style.borderColor = "#8a6508";
+    el.innerHTML = mode==="findChar" ? `<b>${esc(o.n.name)}</b>` : profileCardHTML(o.n, deeds.reveal, true);
+    el.dataset.opt = o.n.id;
     el.addEventListener("click", deedsGuess);
     st.appendChild(el);
   });
